@@ -49,17 +49,7 @@ private extension todolistApp {
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {
-            removeStoreFiles(at: storeURL)
-            do {
-                return try ModelContainer(for: schema, configurations: [config])
-            } catch {
-                let inMemoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-                do {
-                    return try ModelContainer(for: schema, configurations: [inMemoryConfig])
-                } catch {
-                    fatalError("Could not create ModelContainer: \(error)")
-                }
-            }
+            fatalError("Could not create ModelContainer: \(error)")
         }
     }
 
@@ -68,20 +58,5 @@ private extension todolistApp {
         let storeDirectory = baseURL.appendingPathComponent("todolist", isDirectory: true)
         try? FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
         return storeDirectory.appendingPathComponent("todolist.store")
-    }
-
-    static func removeStoreFiles(at storeURL: URL) {
-        let fileManager = FileManager.default
-        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
-        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
-        let candidateURLs = [
-            storeURL,
-            walURL,
-            shmURL
-        ]
-
-        for url in candidateURLs where fileManager.fileExists(atPath: url.path()) {
-            try? fileManager.removeItem(at: url)
-        }
     }
 }

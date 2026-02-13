@@ -403,6 +403,7 @@ struct ContentView: View {
             modelContext.insert(item)
             inputText = ""
         }
+        persistChanges()
         scheduleReminder(item)
     }
 
@@ -412,6 +413,7 @@ struct ContentView: View {
             item.updatedAt = .now
             item.completedAt = item.isCompleted ? .now : nil
         }
+        persistChanges()
     }
 
     private func toggleSelection(for item: Item) {
@@ -435,6 +437,7 @@ struct ContentView: View {
         selectedTaskIDs.remove(item.id)
         pendingUndoSnapshot = snapshot
         scheduleUndoDismiss()
+        persistChanges()
         Task { await reminderService.cancel(for: item.id) }
     }
 
@@ -457,6 +460,7 @@ struct ContentView: View {
     private func restore(_ snapshot: DeletedTaskSnapshot) {
         let item = snapshot.makeItem()
         modelContext.insert(item)
+        persistChanges()
         scheduleReminder(item)
     }
 
@@ -485,6 +489,7 @@ struct ContentView: View {
                 item.completedAt = completed ? .now : nil
             }
         }
+        persistChanges()
     }
 
     private func applyBatchTagAction() {
@@ -512,6 +517,7 @@ struct ContentView: View {
             scheduleReminder(item)
         }
 
+        persistChanges()
         batchTagText = ""
         batchTagAction = nil
     }
@@ -539,6 +545,10 @@ struct ContentView: View {
         return (0..<7).compactMap { offset in
             calendar.date(byAdding: .day, value: offset, to: interval.start)
         }
+    }
+
+    private func persistChanges() {
+        try? modelContext.save()
     }
 
     private func syncSelectedDateIfNeeded(with newValue: Date) {
@@ -575,6 +585,7 @@ private struct LayoutMetrics {
 
 private struct TaskEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
 
     let item: Item
@@ -756,6 +767,7 @@ private struct TaskEditorView: View {
         item.reminderOffsetMinutes = reminderOffsetMinutes
         item.isFlagged = isFlagged
         item.updatedAt = .now
+        try? modelContext.save()
         onSave(item)
         dismiss()
     }
