@@ -10,9 +10,29 @@ import SwiftData
 
 @Model
 final class Item {
-    var timestamp: Date
-    
-    init(timestamp: Date) {
-        self.timestamp = timestamp
+    @Attribute(.unique) var id: UUID
+    var title: String
+    var markdownDescription: String
+    var isCompleted: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var completedAt: Date?
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        markdownDescription: String = "",
+        isCompleted: Bool = false,
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        completedAt: Date? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.markdownDescription = markdownDescription
+        self.isCompleted = isCompleted
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.completedAt = completedAt
     }
 }

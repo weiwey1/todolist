@@ -23,12 +23,30 @@ final class todolistUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testAddTaskFlow() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
+        let input = app.textFields["taskInputField"]
+        XCTAssertTrue(input.waitForExistence(timeout: 2))
+        input.tap()
+        input.typeText("买牛奶")
+
+        let addButton = app.buttons["taskAddButton"]
+        XCTAssertTrue(addButton.isEnabled)
+        addButton.tap()
+
+        XCTAssertTrue(app.staticTexts["买牛奶"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
+    func testFilterSegmentExists() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        XCTAssertTrue(app.buttons["全部"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["未完成"].exists)
+        XCTAssertTrue(app.buttons["已完成"].exists)
     }
 
     @MainActor

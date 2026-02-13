@@ -14,13 +14,7 @@ struct todolistApp: App {
         let schema = Schema([
             Item.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
+        return Self.makeContainer(schema: schema)
     }()
 
     var body: some Scene {
@@ -28,5 +22,50 @@ struct todolistApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+    }
+}
+
+private extension todolistApp {
+    static func makeContainer(schema: Schema) -> ModelContainer {
+        let storeURL = storeURL()
+        let config = ModelConfiguration(schema: schema, url: storeURL)
+
+        do {
+            return try ModelContainer(for: schema, configurations: [config])
+        } catch {
+            removeStoreFiles(at: storeURL)
+            do {
+                return try ModelContainer(for: schema, configurations: [config])
+            } catch {
+                let inMemoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                do {
+                    return try ModelContainer(for: schema, configurations: [inMemoryConfig])
+                } catch {
+                    fatalError("Could not create ModelContainer: \(error)")
+                }
+            }
+        }
+    }
+
+    static func storeURL() -> URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let storeDirectory = baseURL.appendingPathComponent("todolist", isDirectory: true)
+        try? FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        return storeDirectory.appendingPathComponent("todolist.store")
+    }
+
+    static func removeStoreFiles(at storeURL: URL) {
+        let fileManager = FileManager.default
+        let walURL = URL(fileURLWithPath: storeURL.path + "-wal")
+        let shmURL = URL(fileURLWithPath: storeURL.path + "-shm")
+        let candidateURLs = [
+            storeURL,
+            walURL,
+            shmURL
+        ]
+
+        for url in candidateURLs where fileManager.fileExists(atPath: url.path()) {
+            try? fileManager.removeItem(at: url)
+        }
     }
 }
