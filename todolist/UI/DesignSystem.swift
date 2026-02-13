@@ -14,7 +14,14 @@ struct AppColorTokens {
     let accent: Color
     let success: Color
     let danger: Color
+    let warning: Color
     let border: Color
+    let dueToday: Color
+    let overdue: Color
+    let priorityLow: Color
+    let priorityMedium: Color
+    let priorityHigh: Color
+    let priorityUrgent: Color
 
     let gradientTop: Color
     let gradientBottom: Color
@@ -89,7 +96,14 @@ struct AppTheme {
             accent: Color(red: 0.08, green: 0.64, blue: 0.60),
             success: Color(red: 0.10, green: 0.66, blue: 0.51),
             danger: Color(red: 0.89, green: 0.31, blue: 0.34),
+            warning: Color(red: 0.90, green: 0.54, blue: 0.14),
             border: Color.black.opacity(0.08),
+            dueToday: Color(red: 0.96, green: 0.62, blue: 0.14),
+            overdue: Color(red: 0.89, green: 0.31, blue: 0.34),
+            priorityLow: Color(red: 0.30, green: 0.66, blue: 0.58),
+            priorityMedium: Color(red: 0.27, green: 0.56, blue: 0.89),
+            priorityHigh: Color(red: 0.94, green: 0.63, blue: 0.19),
+            priorityUrgent: Color(red: 0.90, green: 0.25, blue: 0.28),
             gradientTop: Color(red: 0.89, green: 0.97, blue: 0.96),
             gradientBottom: Color(red: 0.96, green: 0.95, blue: 0.99),
             mutedSurface: Color(red: 0.93, green: 0.97, blue: 0.96)
@@ -121,7 +135,14 @@ struct AppTheme {
             accent: Color(red: 0.20, green: 0.80, blue: 0.74),
             success: Color(red: 0.24, green: 0.83, blue: 0.62),
             danger: Color(red: 0.98, green: 0.48, blue: 0.49),
+            warning: Color(red: 0.96, green: 0.63, blue: 0.28),
             border: Color.white.opacity(0.12),
+            dueToday: Color(red: 0.98, green: 0.74, blue: 0.30),
+            overdue: Color(red: 1.0, green: 0.52, blue: 0.50),
+            priorityLow: Color(red: 0.35, green: 0.78, blue: 0.69),
+            priorityMedium: Color(red: 0.41, green: 0.71, blue: 0.97),
+            priorityHigh: Color(red: 0.98, green: 0.73, blue: 0.32),
+            priorityUrgent: Color(red: 0.99, green: 0.45, blue: 0.48),
             gradientTop: Color(red: 0.10, green: 0.14, blue: 0.15),
             gradientBottom: Color(red: 0.07, green: 0.09, blue: 0.11),
             mutedSurface: Color(red: 0.15, green: 0.20, blue: 0.20)

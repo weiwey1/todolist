@@ -14,16 +14,46 @@ struct ContentView: View {
     @Query(sort: [SortDescriptor(\Item.createdAt, order: .reverse)]) private var items: [Item]
 
     @State private var inputText = ""
-    @State private var selectedFilter: TaskFilter = .all
+    @State private var viewMode: MainViewMode = .list
+    @State private var filterState = TaskFilterState()
+    @State private var showAdvancedFilter = false
+    @State private var filterDraftTagText = ""
+
+    @State private var calendarScope: CalendarScope = .month
+    @State private var selectedDate = Date()
+    @State private var clockNow = Date()
+    @State private var lastDayAnchor = Date()
+
+    @State private var isSelectionMode = false
+    @State private var selectedTaskIDs: Set<UUID> = []
+    @State private var batchTagText = ""
+    @State private var batchTagAction: BatchTagAction?
+
     @State private var pendingUndoSnapshot: DeletedTaskSnapshot?
     @State private var undoDismissTask: Task<Void, Never>?
+    private let reminderService = ReminderService()
 
     private var theme: AppTheme {
         AppTheme.resolve(for: colorScheme)
     }
 
     private var sections: (active: [Item], completed: [Item]) {
-        TaskDomain.split(items: items, filter: selectedFilter)
+        TaskQueryService.split(items: items, filter: filterState)
+    }
+
+    private var selectedItems: [Item] {
+        items.filter { selectedTaskIDs.contains($0.id) }
+    }
+
+    private var selectedDateItems: [Item] {
+        (sections.active + sections.completed)
+            .filter { item in
+                guard let dueAt = item.dueAt else { return false }
+                return Calendar.current.isDate(dueAt, inSameDayAs: selectedDate)
+            }
+            .sorted { lhs, rhs in
+                (lhs.dueAt ?? .distantFuture) < (rhs.dueAt ?? .distantFuture)
+            }
     }
 
     var body: some View {
@@ -33,26 +63,103 @@ struct ContentView: View {
                 ZStack {
                     backgroundLayer
 
-                    taskList(metrics: metrics)
+                    Group {
+                        switch viewMode {
+                        case .list:
+                            taskList(metrics: metrics)
+                        case .calendar:
+                            calendarBoard(metrics: metrics)
+                        }
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
                 .safeAreaInset(edge: .top, spacing: theme.spacing.md) {
                     topPanel(metrics: metrics)
                 }
                 .safeAreaInset(edge: .bottom) {
-                    if pendingUndoSnapshot != nil {
-                        UndoFloatingBar(onUndo: undoDelete, theme: theme)
-                            .padding(.horizontal, metrics.horizontalPadding)
-                            .padding(.bottom, theme.spacing.sm)
-                            .frame(maxWidth: metrics.contentWidth)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    VStack(spacing: theme.spacing.sm) {
+                        if isSelectionMode && !selectedTaskIDs.isEmpty {
+                            BatchActionBar(
+                                selectedCount: selectedTaskIDs.count,
+                                onComplete: { applyBatchCompletion(true) },
+                                onUncomplete: { applyBatchCompletion(false) },
+                                onDelete: deleteSelected,
+                                onAddTag: { batchTagAction = .add },
+                                onRemoveTag: { batchTagAction = .remove },
+                                theme: theme
+                            )
+                        }
+
+                        if pendingUndoSnapshot != nil {
+                            UndoFloatingBar(onUndo: undoDelete, theme: theme)
+                        }
                     }
+                    .padding(.horizontal, metrics.horizontalPadding)
+                    .padding(.bottom, theme.spacing.sm)
+                    .frame(maxWidth: metrics.contentWidth)
                 }
-                .animation(.easeInOut(duration: 0.24), value: pendingUndoSnapshot != nil)
+                .animation(.easeInOut(duration: 0.25), value: showAdvancedFilter)
+                .animation(.easeInOut(duration: 0.25), value: viewMode)
+                .animation(.easeInOut(duration: 0.25), value: selectedTaskIDs.count)
+                .animation(.easeInOut(duration: 0.25), value: pendingUndoSnapshot != nil)
             }
-            .navigationTitle("任务清单")
+            .navigationTitle("任务规划")
 #if os(iOS)
             .toolbarBackground(.hidden, for: .navigationBar)
 #endif
+            .toolbar {
+                ToolbarItemGroup(placement: .automatic) {
+                    Button(isSelectionMode ? "完成选择" : "多选") {
+                        isSelectionMode.toggle()
+                        if !isSelectionMode {
+                            selectedTaskIDs.removeAll()
+                        }
+                    }
+
+                    Button("筛选") {
+                        showAdvancedFilter.toggle()
+                    }
+                    .keyboardShortcut("f", modifiers: [.command])
+
+                    if isSelectionMode {
+                        Button("全选", action: selectAllVisible)
+                            .keyboardShortcut("a", modifiers: [.command])
+                    }
+                }
+            }
+            .alert(
+                batchTagAction == nil ? "" : (batchTagAction == .add ? "批量加标签" : "批量删标签"),
+                isPresented: Binding(
+                    get: { batchTagAction != nil },
+                    set: { value in
+                        if !value { batchTagAction = nil }
+                    }
+                )
+            ) {
+                TextField("标签（支持逗号分隔）", text: $batchTagText)
+                Button("取消", role: .cancel) {
+                    batchTagText = ""
+                }
+                Button("应用", action: applyBatchTagAction)
+            } message: {
+                Text("将对选中的任务统一处理标签")
+            }
+            .task {
+                await reminderService.requestAuthorizationIfNeeded()
+                await reminderService.rebuild(for: items)
+            }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(60))
+                    if Task.isCancelled { return }
+                    await MainActor.run {
+                        clockNow = Date()
+                    }
+                }
+            }
+            .onChange(of: clockNow) { newValue in
+                syncSelectedDateIfNeeded(with: newValue)
+            }
         }
     }
 
@@ -63,7 +170,10 @@ struct ContentView: View {
                     ForEach(sections.active) { item in
                         TaskCardRow(
                             item: item,
-                            destination: TaskEditorView(item: item),
+                            destination: TaskEditorView(item: item, onSave: scheduleReminder),
+                            isSelectionMode: isSelectionMode,
+                            isSelected: selectedTaskIDs.contains(item.id),
+                            onSelectToggle: { toggleSelection(for: item) },
                             onToggle: { toggleCompletion(for: item) },
                             onDelete: { delete(item) },
                             theme: theme
@@ -72,7 +182,6 @@ struct ContentView: View {
                         .listRowBackground(Color.clear)
                         .padding(.horizontal, metrics.horizontalPadding)
                         .padding(.vertical, theme.spacing.xs)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
                     }
                 } header: {
                     sectionHeader("未完成", metrics: metrics)
@@ -84,7 +193,10 @@ struct ContentView: View {
                     ForEach(sections.completed) { item in
                         TaskCardRow(
                             item: item,
-                            destination: TaskEditorView(item: item),
+                            destination: TaskEditorView(item: item, onSave: scheduleReminder),
+                            isSelectionMode: isSelectionMode,
+                            isSelected: selectedTaskIDs.contains(item.id),
+                            onSelectToggle: { toggleSelection(for: item) },
                             onToggle: { toggleCompletion(for: item) },
                             onDelete: { delete(item) },
                             theme: theme
@@ -93,7 +205,6 @@ struct ContentView: View {
                         .listRowBackground(Color.clear)
                         .padding(.horizontal, metrics.horizontalPadding)
                         .padding(.vertical, theme.spacing.xs)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .bottom)), removal: .opacity))
                     }
                 } header: {
                     sectionHeader("已完成", metrics: metrics)
@@ -112,12 +223,97 @@ struct ContentView: View {
         .frame(maxWidth: metrics.contentWidth)
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .animation(.easeInOut(duration: 0.24), value: selectedFilter)
-        .animation(.easeInOut(duration: 0.24), value: sections.active.count + sections.completed.count)
+    }
+
+    private func calendarBoard(metrics: LayoutMetrics) -> some View {
+        ScrollView {
+            VStack(spacing: theme.spacing.md) {
+                EditorCardSection(title: "日历范围", theme: theme) {
+                    Picker("范围", selection: $calendarScope) {
+                        ForEach(CalendarScope.allCases) { scope in
+                            Text(scope.title).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .tint(theme.colors.accent)
+                }
+
+                if calendarScope == .month {
+                    EditorCardSection(title: "选择日期", theme: theme) {
+                        DatePicker("日期", selection: $selectedDate, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .labelsHidden()
+                    }
+                } else {
+                    weekStrip
+                }
+
+                EditorCardSection(
+                    title: "\(selectedDate.formatted(date: .abbreviated, time: .omitted)) 的任务",
+                    theme: theme
+                ) {
+                    if selectedDateItems.isEmpty {
+                        Text("当天没有任务")
+                            .font(theme.typography.caption)
+                            .foregroundStyle(theme.colors.textSecondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+                            ForEach(selectedDateItems) { item in
+                                HStack(spacing: theme.spacing.sm) {
+                                    PriorityBadge(priority: item.priority, theme: theme)
+                                    Text(item.title)
+                                        .font(theme.typography.body)
+                                        .foregroundStyle(theme.colors.textPrimary)
+                                        .lineLimit(2)
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.bottom, 100)
+            .frame(maxWidth: metrics.contentWidth)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var weekStrip: some View {
+        let dates = weekDates(containing: selectedDate)
+        return EditorCardSection(title: "本周", theme: theme) {
+            HStack(spacing: theme.spacing.sm) {
+                ForEach(dates, id: \.self) { date in
+                    Button {
+                        selectedDate = date
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(date.formatted(.dateTime.weekday(.narrow)))
+                            Text(date.formatted(.dateTime.day()))
+                        }
+                        .font(theme.typography.caption)
+                        .foregroundStyle(
+                            Calendar.current.isDate(date, inSameDayAs: selectedDate) ? .white : theme.colors.textPrimary
+                        )
+                        .padding(.horizontal, theme.spacing.sm)
+                        .padding(.vertical, theme.spacing.sm)
+                        .background(
+                            RoundedRectangle(cornerRadius: theme.radius.md, style: .continuous)
+                                .fill(
+                                    Calendar.current.isDate(date, inSameDayAs: selectedDate)
+                                    ? theme.colors.accent
+                                    : theme.colors.mutedSurface
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 
     private func topPanel(metrics: LayoutMetrics) -> some View {
-        Group {
+        VStack(spacing: theme.spacing.md) {
             if metrics.isWide {
                 HStack(alignment: .top, spacing: theme.spacing.md) {
                     TaskInputCard(
@@ -128,26 +324,37 @@ struct ContentView: View {
                     )
                     .frame(maxWidth: .infinity)
 
-                    FilterSegmentCard(
-                        selectedFilter: $selectedFilter,
+                    MainModeCard(
+                        mode: $viewMode,
+                        completionScope: $filterState.completion,
                         theme: theme
                     )
-                    .frame(width: 280)
+                    .frame(width: 320)
                 }
             } else {
-                VStack(spacing: theme.spacing.md) {
-                    TaskInputCard(
-                        text: $inputText,
-                        onAdd: addTask,
-                        canAdd: TaskDomain.normalizedTitle(inputText) != nil,
-                        theme: theme
-                    )
+                TaskInputCard(
+                    text: $inputText,
+                    onAdd: addTask,
+                    canAdd: TaskDomain.normalizedTitle(inputText) != nil,
+                    theme: theme
+                )
 
-                    FilterSegmentCard(
-                        selectedFilter: $selectedFilter,
-                        theme: theme
-                    )
-                }
+                MainModeCard(
+                    mode: $viewMode,
+                    completionScope: $filterState.completion,
+                    theme: theme
+                )
+            }
+
+            if showAdvancedFilter {
+                AdvancedFilterCard(
+                    filterState: $filterState,
+                    draftTagText: $filterDraftTagText,
+                    onAddTag: addFilterTags,
+                    onRemoveTag: removeFilterTag,
+                    onClear: clearFilters,
+                    theme: theme
+                )
             }
         }
         .padding(.horizontal, metrics.horizontalPadding)
@@ -196,6 +403,7 @@ struct ContentView: View {
             modelContext.insert(item)
             inputText = ""
         }
+        scheduleReminder(item)
     }
 
     private func toggleCompletion(for item: Item) {
@@ -206,13 +414,35 @@ struct ContentView: View {
         }
     }
 
+    private func toggleSelection(for item: Item) {
+        if selectedTaskIDs.contains(item.id) {
+            selectedTaskIDs.remove(item.id)
+        } else {
+            selectedTaskIDs.insert(item.id)
+        }
+    }
+
+    private func selectAllVisible() {
+        let visibleIDs = Set((sections.active + sections.completed).map(\.id))
+        selectedTaskIDs = visibleIDs
+    }
+
     private func delete(_ item: Item) {
         let snapshot = DeletedTaskSnapshot(item: item)
         withAnimation(.easeInOut(duration: 0.24)) {
             modelContext.delete(item)
         }
+        selectedTaskIDs.remove(item.id)
         pendingUndoSnapshot = snapshot
         scheduleUndoDismiss()
+        Task { await reminderService.cancel(for: item.id) }
+    }
+
+    private func deleteSelected() {
+        for item in selectedItems {
+            delete(item)
+        }
+        selectedTaskIDs.removeAll()
     }
 
     private func undoDelete() {
@@ -225,7 +455,9 @@ struct ContentView: View {
     }
 
     private func restore(_ snapshot: DeletedTaskSnapshot) {
-        modelContext.insert(snapshot.makeItem())
+        let item = snapshot.makeItem()
+        modelContext.insert(item)
+        scheduleReminder(item)
     }
 
     private func scheduleUndoDismiss() {
@@ -237,6 +469,85 @@ struct ContentView: View {
                 pendingUndoSnapshot = nil
             }
         }
+    }
+
+    private func scheduleReminder(_ item: Item) {
+        Task {
+            await reminderService.schedule(for: item)
+        }
+    }
+
+    private func applyBatchCompletion(_ completed: Bool) {
+        withAnimation(.easeInOut(duration: 0.24)) {
+            for item in selectedItems {
+                item.isCompleted = completed
+                item.updatedAt = .now
+                item.completedAt = completed ? .now : nil
+            }
+        }
+    }
+
+    private func applyBatchTagAction() {
+        guard let action = batchTagAction else { return }
+        let tags = Set(TaskDomain.normalizedTags(batchTagText))
+        guard !tags.isEmpty else {
+            batchTagText = ""
+            batchTagAction = nil
+            return
+        }
+
+        for item in selectedItems {
+            let current = Set(item.tags.map { $0.lowercased() })
+            switch action {
+            case .add:
+                let normalizedTags = Set(tags.map { $0.lowercased() })
+                let merged = current.union(normalizedTags)
+                item.tags = merged.sorted()
+            case .remove:
+                let normalizedTags = Set(tags.map { $0.lowercased() })
+                let remained = current.subtracting(normalizedTags)
+                item.tags = remained.sorted()
+            }
+            item.updatedAt = .now
+            scheduleReminder(item)
+        }
+
+        batchTagText = ""
+        batchTagAction = nil
+    }
+
+    private func addFilterTags() {
+        let tags = TaskDomain.normalizedTags(filterDraftTagText)
+        for tag in tags {
+            filterState.requiredTags.insert(tag.lowercased())
+        }
+        filterDraftTagText = ""
+    }
+
+    private func removeFilterTag(_ tag: String) {
+        filterState.requiredTags.remove(tag.lowercased())
+    }
+
+    private func clearFilters() {
+        filterState = TaskFilterState(completion: filterState.completion)
+        filterDraftTagText = ""
+    }
+
+    private func weekDates(containing date: Date) -> [Date] {
+        let calendar = Calendar.current
+        guard let interval = calendar.dateInterval(of: .weekOfYear, for: date) else { return [date] }
+        return (0..<7).compactMap { offset in
+            calendar.date(byAdding: .day, value: offset, to: interval.start)
+        }
+    }
+
+    private func syncSelectedDateIfNeeded(with newValue: Date) {
+        let calendar = Calendar.current
+        guard !calendar.isDate(lastDayAnchor, inSameDayAs: newValue) else { return }
+        if calendar.isDate(selectedDate, inSameDayAs: lastDayAnchor) {
+            selectedDate = newValue
+        }
+        lastDayAnchor = newValue
     }
 }
 
@@ -267,17 +578,33 @@ private struct TaskEditorView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let item: Item
+    let onSave: (Item) -> Void
     @State private var draftTitle: String
     @State private var draftDescription: String
+    @State private var draftDueAt: Date
+    @State private var hasDueAt: Bool
+    @State private var draftPriority: TaskPriority
+    @State private var draftTagsText: String
+    @State private var reminderEnabled: Bool
+    @State private var reminderOffsetMinutes: Int
+    @State private var isFlagged: Bool
 
     private var theme: AppTheme {
         AppTheme.resolve(for: colorScheme)
     }
 
-    init(item: Item) {
+    init(item: Item, onSave: @escaping (Item) -> Void) {
         self.item = item
+        self.onSave = onSave
         _draftTitle = State(initialValue: item.title)
         _draftDescription = State(initialValue: item.markdownDescription)
+        _draftDueAt = State(initialValue: item.dueAt ?? .now)
+        _hasDueAt = State(initialValue: item.dueAt != nil)
+        _draftPriority = State(initialValue: item.priority)
+        _draftTagsText = State(initialValue: item.tags.joined(separator: ", "))
+        _reminderEnabled = State(initialValue: item.reminderEnabled)
+        _reminderOffsetMinutes = State(initialValue: item.reminderOffsetMinutes)
+        _isFlagged = State(initialValue: item.isFlagged)
     }
 
     var body: some View {
@@ -312,6 +639,54 @@ private struct TaskEditorView: View {
                                         )
                                 )
                                 .accessibilityIdentifier("taskEditorTitleField")
+                        }
+
+                        EditorCardSection(title: "截止与优先级", theme: theme) {
+                            Toggle("设置截止时间", isOn: $hasDueAt)
+
+                            if hasDueAt {
+                                DatePicker("截止时间", selection: $draftDueAt)
+                                HStack(spacing: theme.spacing.sm) {
+                                    Button("今天") {
+                                        draftDueAt = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: .now) ?? .now
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button("明天") {
+                                        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: .now) ?? .now
+                                        draftDueAt = Calendar.current.date(bySettingHour: 21, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+                                    }
+                                    .buttonStyle(.bordered)
+                                    Button("本周末") {
+                                        draftDueAt = weekendDate()
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+
+                            Picker("优先级", selection: $draftPriority) {
+                                ForEach(TaskPriority.allCases) { level in
+                                    Text(level.title).tag(level)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Toggle("标记重点", isOn: $isFlagged)
+                        }
+
+                        EditorCardSection(title: "标签与提醒", theme: theme) {
+                            TextField("标签（逗号分隔）", text: $draftTagsText)
+                                .textFieldStyle(.roundedBorder)
+
+                            Toggle("启用提醒", isOn: $reminderEnabled)
+                            if reminderEnabled {
+                                Picker("提醒时间", selection: $reminderOffsetMinutes) {
+                                    Text("10 分钟前").tag(10)
+                                    Text("30 分钟前").tag(30)
+                                    Text("1 小时前").tag(60)
+                                    Text("1 天前").tag(24 * 60)
+                                }
+                                .pickerStyle(.menu)
+                            }
                         }
 
                         EditorCardSection(title: "描述（Markdown）", theme: theme) {
@@ -374,8 +749,24 @@ private struct TaskEditorView: View {
         guard let normalized = TaskDomain.normalizedTitle(draftTitle) else { return }
         item.title = normalized
         item.markdownDescription = TaskDomain.normalizedMarkdownDescription(draftDescription)
+        item.dueAt = hasDueAt ? draftDueAt : nil
+        item.priority = draftPriority
+        item.tags = TaskDomain.normalizedTags(draftTagsText)
+        item.reminderEnabled = reminderEnabled
+        item.reminderOffsetMinutes = reminderOffsetMinutes
+        item.isFlagged = isFlagged
         item.updatedAt = .now
+        onSave(item)
         dismiss()
+    }
+
+    private func weekendDate() -> Date {
+        let calendar = Calendar.current
+        let now = Date()
+        let weekday = calendar.component(.weekday, from: now)
+        let daysUntilSaturday = (7 - weekday + 7) % 7
+        let saturday = calendar.date(byAdding: .day, value: daysUntilSaturday, to: now) ?? now
+        return calendar.date(bySettingHour: 21, minute: 0, second: 0, of: saturday) ?? saturday
     }
 }
 
@@ -384,6 +775,12 @@ private struct DeletedTaskSnapshot {
     let title: String
     let markdownDescription: String
     let isCompleted: Bool
+    let dueAt: Date?
+    let priority: TaskPriority
+    let tags: [String]
+    let isFlagged: Bool
+    let reminderEnabled: Bool
+    let reminderOffsetMinutes: Int
     let createdAt: Date
     let updatedAt: Date
     let completedAt: Date?
@@ -393,6 +790,12 @@ private struct DeletedTaskSnapshot {
         title = item.title
         markdownDescription = item.markdownDescription
         isCompleted = item.isCompleted
+        dueAt = item.dueAt
+        priority = item.priority
+        tags = item.tags
+        isFlagged = item.isFlagged
+        reminderEnabled = item.reminderEnabled
+        reminderOffsetMinutes = item.reminderOffsetMinutes
         createdAt = item.createdAt
         updatedAt = item.updatedAt
         completedAt = item.completedAt
@@ -404,11 +807,22 @@ private struct DeletedTaskSnapshot {
             title: title,
             markdownDescription: markdownDescription,
             isCompleted: isCompleted,
+            dueAt: dueAt,
+            priority: priority,
+            tags: tags,
+            isFlagged: isFlagged,
+            reminderEnabled: reminderEnabled,
+            reminderOffsetMinutes: reminderOffsetMinutes,
             createdAt: createdAt,
             updatedAt: updatedAt,
             completedAt: completedAt
         )
     }
+}
+
+private enum BatchTagAction: Equatable {
+    case add
+    case remove
 }
 
 #Preview("Main - Light") {

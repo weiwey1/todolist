@@ -7,15 +7,31 @@
 
 import SwiftUI
 import SwiftData
+import UserNotifications
+
+final class NotificationCenterDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound, .badge]
+    }
+}
 
 @main
 struct todolistApp: App {
+    private let notificationDelegate = NotificationCenterDelegate()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
         ])
         return Self.makeContainer(schema: schema)
     }()
+
+    init() {
+        UNUserNotificationCenter.current().delegate = notificationDelegate
+    }
 
     var body: some Scene {
         WindowGroup {
