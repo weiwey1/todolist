@@ -58,7 +58,7 @@ struct TaskInputCard: View {
 }
 
 struct MainModeCard: View {
-    @Binding var mode: MainViewMode
+    @Binding var subTab: TaskSubTab
     @Binding var completionScope: TaskCompletionScope
     let theme: AppTheme
 
@@ -68,8 +68,8 @@ struct MainModeCard: View {
                 .font(theme.typography.section)
                 .foregroundStyle(theme.colors.textSecondary)
 
-            Picker("视图", selection: $mode) {
-                ForEach(MainViewMode.allCases) { target in
+            Picker("视图", selection: $subTab) {
+                ForEach(TaskSubTab.allCases) { target in
                     Text(target.title).tag(target)
                 }
             }

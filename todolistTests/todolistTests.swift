@@ -8,6 +8,7 @@
 import Foundation
 import SwiftData
 import Testing
+import UIKit
 @testable import todolist
 
 struct todolistTests {
@@ -105,6 +106,41 @@ struct todolistTests {
         let fetched = try context.fetch(descriptor)
         #expect(fetched.count == 1)
         #expect(fetched.first?.title == "买牛奶")
+    }
+
+    @Test
+    @MainActor
+    func appSettingsPersistsValues() {
+        let suiteName = "todolist.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let store = AppSettingsStore(defaults: defaults)
+        store.themeMode = .dark
+        store.defaultReminderOffsetMinutes = 60
+        store.showCompletedInStats = false
+
+        let reloaded = AppSettingsStore(defaults: defaults)
+        #expect(reloaded.themeMode == .dark)
+        #expect(reloaded.defaultReminderOffsetMinutes == 60)
+        #expect(reloaded.showCompletedInStats == false)
+    }
+
+    @Test
+    func avatarStorageSaveLoadDelete() async throws {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 32)).image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+        }
+        let data = try #require(image.jpegData(compressionQuality: 0.8))
+
+        _ = try await AvatarStorage.shared.save(imageData: data)
+        let loaded = await AvatarStorage.shared.loadImage()
+        #expect(loaded != nil)
+
+        try await AvatarStorage.shared.delete()
+        let removed = await AvatarStorage.shared.loadImage()
+        #expect(removed == nil)
     }
 
 }

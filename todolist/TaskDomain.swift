@@ -4,7 +4,12 @@
 
 import Foundation
 
-enum MainViewMode: String, CaseIterable, Identifiable {
+enum RootTab: Hashable {
+    case tasks
+    case me
+}
+
+enum TaskSubTab: String, CaseIterable, Identifiable {
     case list
     case calendar
 
@@ -16,6 +21,25 @@ enum MainViewMode: String, CaseIterable, Identifiable {
             return "列表"
         case .calendar:
             return "日历"
+        }
+    }
+}
+
+enum AppThemeMode: String, CaseIterable, Codable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .system:
+            return "跟随系统"
+        case .light:
+            return "浅色"
+        case .dark:
+            return "深色"
         }
     }
 }

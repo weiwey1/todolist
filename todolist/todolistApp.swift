@@ -21,6 +21,7 @@ final class NotificationCenterDelegate: NSObject, UNUserNotificationCenterDelega
 @main
 struct todolistApp: App {
     private let notificationDelegate = NotificationCenterDelegate()
+    @State private var appSettings = AppSettingsStore()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -35,7 +36,9 @@ struct todolistApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootTabView()
+                .environment(appSettings)
+                .preferredColorScheme(preferredColorScheme)
         }
         .modelContainer(sharedModelContainer)
     }
@@ -58,5 +61,18 @@ private extension todolistApp {
         let storeDirectory = baseURL.appendingPathComponent("todolist", isDirectory: true)
         try? FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
         return storeDirectory.appendingPathComponent("todolist.store")
+    }
+}
+
+private extension todolistApp {
+    var preferredColorScheme: ColorScheme? {
+        switch appSettings.themeMode {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
     }
 }

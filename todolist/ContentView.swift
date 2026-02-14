@@ -9,12 +9,13 @@ import SwiftData
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(AppSettingsStore.self) private var appSettings
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
     @Query(sort: [SortDescriptor(\Item.createdAt, order: .reverse)]) private var items: [Item]
 
     @State private var inputText = ""
-    @State private var viewMode: MainViewMode = .list
+    @State private var taskSubTab: TaskSubTab = .list
     @State private var filterState = TaskFilterState()
     @State private var showAdvancedFilter = false
     @State private var filterDraftTagText = ""
@@ -23,6 +24,7 @@ struct ContentView: View {
     @State private var selectedDate = Date()
     @State private var clockNow = Date()
     @State private var lastDayAnchor = Date()
+    @State private var lastAddedItemID: UUID?
 
     @State private var isSelectionMode = false
     @State private var selectedTaskIDs: Set<UUID> = []
@@ -64,7 +66,7 @@ struct ContentView: View {
                     backgroundLayer
 
                     Group {
-                        switch viewMode {
+                        switch taskSubTab {
                         case .list:
                             taskList(metrics: metrics)
                         case .calendar:
@@ -72,9 +74,6 @@ struct ContentView: View {
                         }
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                }
-                .safeAreaInset(edge: .top, spacing: theme.spacing.md) {
-                    topPanel(metrics: metrics)
                 }
                 .safeAreaInset(edge: .bottom) {
                     VStack(spacing: theme.spacing.sm) {
@@ -99,11 +98,11 @@ struct ContentView: View {
                     .frame(maxWidth: metrics.contentWidth)
                 }
                 .animation(.easeInOut(duration: 0.25), value: showAdvancedFilter)
-                .animation(.easeInOut(duration: 0.25), value: viewMode)
+                .animation(.easeInOut(duration: 0.25), value: taskSubTab)
                 .animation(.easeInOut(duration: 0.25), value: selectedTaskIDs.count)
                 .animation(.easeInOut(duration: 0.25), value: pendingUndoSnapshot != nil)
             }
-            .navigationTitle("任务规划")
+            .navigationTitle("任务")
 #if os(iOS)
             .toolbarBackground(.hidden, for: .navigationBar)
 #endif
@@ -164,70 +163,98 @@ struct ContentView: View {
     }
 
     private func taskList(metrics: LayoutMetrics) -> some View {
-        List {
-            if !sections.active.isEmpty {
+        ScrollViewReader { proxy in
+            List {
                 Section {
-                    ForEach(sections.active) { item in
-                        TaskCardRow(
-                            item: item,
-                            destination: TaskEditorView(item: item, onSave: scheduleReminder),
-                            isSelectionMode: isSelectionMode,
-                            isSelected: selectedTaskIDs.contains(item.id),
-                            onSelectToggle: { toggleSelection(for: item) },
-                            onToggle: { toggleCompletion(for: item) },
-                            onDelete: { delete(item) },
-                            theme: theme
-                        )
+                    topPanel(metrics: metrics)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .padding(.top, theme.spacing.md)
+                }
+
+                if !sections.active.isEmpty {
+                    Section {
+                        ForEach(sections.active) { item in
+                            TaskCardRow(
+                                item: item,
+                                destination: TaskEditorView(
+                                    item: item,
+                                    defaultReminderOffsetMinutes: appSettings.defaultReminderOffsetMinutes,
+                                    onSave: scheduleReminder
+                                ),
+                                isSelectionMode: isSelectionMode,
+                                isSelected: selectedTaskIDs.contains(item.id),
+                                onSelectToggle: { toggleSelection(for: item) },
+                                onToggle: { toggleCompletion(for: item) },
+                                onDelete: { delete(item) },
+                                theme: theme
+                            )
+                            .id(item.id)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .padding(.horizontal, metrics.horizontalPadding)
+                            .padding(.vertical, theme.spacing.xs)
+                        }
+                    } header: {
+                        sectionHeader("未完成", metrics: metrics)
+                    }
+                }
+
+                if !sections.completed.isEmpty {
+                    Section {
+                        ForEach(sections.completed) { item in
+                            TaskCardRow(
+                                item: item,
+                                destination: TaskEditorView(
+                                    item: item,
+                                    defaultReminderOffsetMinutes: appSettings.defaultReminderOffsetMinutes,
+                                    onSave: scheduleReminder
+                                ),
+                                isSelectionMode: isSelectionMode,
+                                isSelected: selectedTaskIDs.contains(item.id),
+                                onSelectToggle: { toggleSelection(for: item) },
+                                onToggle: { toggleCompletion(for: item) },
+                                onDelete: { delete(item) },
+                                theme: theme
+                            )
+                            .id(item.id)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .padding(.horizontal, metrics.horizontalPadding)
+                            .padding(.vertical, theme.spacing.xs)
+                        }
+                    } header: {
+                        sectionHeader("已完成", metrics: metrics)
+                    }
+                }
+
+                if sections.active.isEmpty && sections.completed.isEmpty {
+                    EmptyStateCard(theme: theme)
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                         .padding(.horizontal, metrics.horizontalPadding)
-                        .padding(.vertical, theme.spacing.xs)
-                    }
-                } header: {
-                    sectionHeader("未完成", metrics: metrics)
+                        .padding(.vertical, theme.spacing.lg)
+                        .frame(maxWidth: metrics.contentWidth)
                 }
             }
-
-            if !sections.completed.isEmpty {
-                Section {
-                    ForEach(sections.completed) { item in
-                        TaskCardRow(
-                            item: item,
-                            destination: TaskEditorView(item: item, onSave: scheduleReminder),
-                            isSelectionMode: isSelectionMode,
-                            isSelected: selectedTaskIDs.contains(item.id),
-                            onSelectToggle: { toggleSelection(for: item) },
-                            onToggle: { toggleCompletion(for: item) },
-                            onDelete: { delete(item) },
-                            theme: theme
-                        )
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .padding(.horizontal, metrics.horizontalPadding)
-                        .padding(.vertical, theme.spacing.xs)
-                    }
-                } header: {
-                    sectionHeader("已完成", metrics: metrics)
+            .frame(maxWidth: metrics.contentWidth)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .onChange(of: lastAddedItemID) { itemID in
+                guard let itemID else { return }
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    proxy.scrollTo(itemID, anchor: .top)
                 }
-            }
-
-            if sections.active.isEmpty && sections.completed.isEmpty {
-                EmptyStateCard(theme: theme)
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .padding(.horizontal, metrics.horizontalPadding)
-                    .padding(.vertical, theme.spacing.lg)
-                    .frame(maxWidth: metrics.contentWidth)
             }
         }
-        .frame(maxWidth: metrics.contentWidth)
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
     }
 
     private func calendarBoard(metrics: LayoutMetrics) -> some View {
         ScrollView {
             VStack(spacing: theme.spacing.md) {
+                topPanel(metrics: metrics)
+
                 EditorCardSection(title: "日历范围", theme: theme) {
                     Picker("范围", selection: $calendarScope) {
                         ForEach(CalendarScope.allCases) { scope in
@@ -325,7 +352,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
 
                     MainModeCard(
-                        mode: $viewMode,
+                        subTab: $taskSubTab,
                         completionScope: $filterState.completion,
                         theme: theme
                     )
@@ -340,7 +367,7 @@ struct ContentView: View {
                 )
 
                 MainModeCard(
-                    mode: $viewMode,
+                    subTab: $taskSubTab,
                     completionScope: $filterState.completion,
                     theme: theme
                 )
@@ -398,12 +425,16 @@ struct ContentView: View {
 
     private func addTask() {
         guard let normalized = TaskDomain.normalizedTitle(inputText) else { return }
-        let item = Item(title: normalized)
+        let item = Item(
+            title: normalized,
+            reminderOffsetMinutes: appSettings.defaultReminderOffsetMinutes
+        )
         withAnimation(.easeInOut(duration: 0.24)) {
             modelContext.insert(item)
             inputText = ""
         }
         persistChanges()
+        lastAddedItemID = item.id
         scheduleReminder(item)
     }
 
@@ -589,6 +620,7 @@ private struct TaskEditorView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     let item: Item
+    let defaultReminderOffsetMinutes: Int
     let onSave: (Item) -> Void
     @State private var draftTitle: String
     @State private var draftDescription: String
@@ -604,8 +636,9 @@ private struct TaskEditorView: View {
         AppTheme.resolve(for: colorScheme)
     }
 
-    init(item: Item, onSave: @escaping (Item) -> Void) {
+    init(item: Item, defaultReminderOffsetMinutes: Int, onSave: @escaping (Item) -> Void) {
         self.item = item
+        self.defaultReminderOffsetMinutes = defaultReminderOffsetMinutes
         self.onSave = onSave
         _draftTitle = State(initialValue: item.title)
         _draftDescription = State(initialValue: item.markdownDescription)
@@ -614,7 +647,9 @@ private struct TaskEditorView: View {
         _draftPriority = State(initialValue: item.priority)
         _draftTagsText = State(initialValue: item.tags.joined(separator: ", "))
         _reminderEnabled = State(initialValue: item.reminderEnabled)
-        _reminderOffsetMinutes = State(initialValue: item.reminderOffsetMinutes)
+        _reminderOffsetMinutes = State(
+            initialValue: item.reminderEnabled ? item.reminderOffsetMinutes : defaultReminderOffsetMinutes
+        )
         _isFlagged = State(initialValue: item.isFlagged)
     }
 
@@ -839,11 +874,13 @@ private enum BatchTagAction: Equatable {
 
 #Preview("Main - Light") {
     ContentView()
+        .environment(AppSettingsStore())
         .modelContainer(for: Item.self, inMemory: true)
 }
 
 #Preview("Main - Dark") {
     ContentView()
+        .environment(AppSettingsStore())
         .modelContainer(for: Item.self, inMemory: true)
         .preferredColorScheme(.dark)
 }
