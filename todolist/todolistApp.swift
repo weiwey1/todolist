@@ -22,6 +22,7 @@ final class NotificationCenterDelegate: NSObject, UNUserNotificationCenterDelega
 struct todolistApp: App {
     private let notificationDelegate = NotificationCenterDelegate()
     @State private var appSettings = AppSettingsStore()
+    @State private var authStore = AuthStore()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -32,12 +33,16 @@ struct todolistApp: App {
 
     init() {
         UNUserNotificationCenter.current().delegate = notificationDelegate
+        if ProcessInfo.processInfo.arguments.contains("UITEST_RESET_AUTH") {
+            AuthSessionStore().clearSession()
+        }
     }
 
     var body: some Scene {
         WindowGroup {
-            RootTabView()
+            AppRootView()
                 .environment(appSettings)
+                .environment(authStore)
                 .preferredColorScheme(preferredColorScheme)
         }
         .modelContainer(sharedModelContainer)

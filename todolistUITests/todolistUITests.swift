@@ -10,22 +10,29 @@ import XCTest
 final class todolistUITests: XCTestCase {
 
     override func setUpWithError() throws {
-        // Put setup code here. This method is called before the invocation of each test method in the class.
-
-        // In UI tests it is usually best to stop immediately when a failure occurs.
         continueAfterFailure = false
-
-        // In UI tests it’s important to set the initial state - such as interface orientation - required for your tests before they run. The setUp method is a good place to do this.
     }
 
     override func tearDownWithError() throws {
-        // Put teardown code here. This method is called after the invocation of each test method in the class.
     }
 
     @MainActor
-    func testAddTaskFlow() throws {
+    func testLoginGateAppearsOnFirstLaunch() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["UITEST_RESET_AUTH"]
         app.launch()
+
+        XCTAssertTrue(app.navigationBars["登录"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.textFields["loginPhoneField"].exists)
+    }
+
+    @MainActor
+    func testPhoneLoginFlowAndTaskCreation() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["UITEST_RESET_AUTH"]
+        app.launch()
+
+        performMockLogin(app: app)
 
         let input = app.textFields["taskInputField"]
         XCTAssertTrue(input.waitForExistence(timeout: 2))
@@ -40,20 +47,64 @@ final class todolistUITests: XCTestCase {
     }
 
     @MainActor
-    func testFilterSegmentExists() throws {
+    func testSessionPersistsAcrossRelaunch() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["UITEST_RESET_AUTH"]
         app.launch()
+        performMockLogin(app: app)
 
-        XCTAssertTrue(app.buttons["全部"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.buttons["未完成"].exists)
-        XCTAssertTrue(app.buttons["已完成"].exists)
+        app.terminate()
+
+        let relaunched = XCUIApplication()
+        relaunched.launch()
+
+        XCTAssertTrue(relaunched.tabBars.buttons["任务"].waitForExistence(timeout: 2))
+        XCTAssertFalse(relaunched.navigationBars["登录"].exists)
+    }
+
+    @MainActor
+    func testLogoutReturnsToLogin() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["UITEST_RESET_AUTH"]
+        app.launch()
+        performMockLogin(app: app)
+
+        app.tabBars.buttons["我"].tap()
+        let logoutButton = app.buttons["logoutButton"]
+        XCTAssertTrue(logoutButton.waitForExistence(timeout: 2))
+        logoutButton.tap()
+
+        XCTAssertTrue(app.navigationBars["登录"].waitForExistence(timeout: 2))
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            let app = XCUIApplication()
+            app.launchArguments = ["UITEST_RESET_AUTH"]
+            app.launch()
         }
+    }
+
+    private func performMockLogin(app: XCUIApplication) {
+        let phoneField = app.textFields["loginPhoneField"]
+        XCTAssertTrue(phoneField.waitForExistence(timeout: 2))
+        phoneField.tap()
+        phoneField.typeText("13800138000")
+
+        let sendCodeButton = app.buttons["sendOtpButton"]
+        XCTAssertTrue(sendCodeButton.isEnabled)
+        sendCodeButton.tap()
+
+        let codeField = app.textFields["otpCodeField"]
+        XCTAssertTrue(codeField.waitForExistence(timeout: 2))
+        codeField.tap()
+        codeField.typeText("123456")
+
+        let loginButton = app.buttons["otpLoginButton"]
+        XCTAssertTrue(loginButton.isEnabled)
+        loginButton.tap()
+
+        XCTAssertTrue(app.tabBars.buttons["任务"].waitForExistence(timeout: 2))
     }
 }

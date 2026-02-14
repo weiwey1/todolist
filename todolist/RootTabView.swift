@@ -29,6 +29,7 @@ struct RootTabView: View {
 
 #Preview {
     RootTabView()
+        .environment(AuthStore())
         .environment(AppSettingsStore())
         .modelContainer(for: Item.self, inMemory: true)
 }

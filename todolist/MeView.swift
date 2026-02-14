@@ -9,6 +9,7 @@ import UIKit
 
 struct MeView: View {
     @Environment(AppSettingsStore.self) private var appSettings
+    @Environment(AuthStore.self) private var authStore
     @Environment(\.colorScheme) private var colorScheme
     @Query private var items: [Item]
 
@@ -24,6 +25,7 @@ struct MeView: View {
         ScrollView {
             VStack(spacing: theme.spacing.md) {
                 profileCard
+                accountCard
                 statsCard
                 settingsEntryCard
             }
@@ -127,6 +129,50 @@ struct MeView: View {
         }
         .padding(theme.spacing.lg)
         .frame(maxWidth: .infinity)
+        .appCardStyle(theme: theme, elevated: true)
+    }
+
+    private var accountCard: some View {
+        VStack(alignment: .leading, spacing: theme.spacing.sm) {
+            Text("账户")
+                .font(theme.typography.section)
+                .foregroundStyle(theme.colors.textSecondary)
+
+            if let session = authStore.currentSession {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(session.displayName ?? "未命名用户")
+                        .font(theme.typography.body)
+                        .foregroundStyle(theme.colors.textPrimary)
+                    Text("登录方式：\(session.provider.title)")
+                        .font(theme.typography.caption)
+                        .foregroundStyle(theme.colors.textSecondary)
+
+                    if session.provider == .phone {
+                        Text("手机号：\(AuthDomain.maskedPhoneNumber(session.phoneNumber))")
+                            .font(theme.typography.caption)
+                            .foregroundStyle(theme.colors.textSecondary)
+                    } else if let email = session.email {
+                        Text("邮箱：\(email)")
+                            .font(theme.typography.caption)
+                            .foregroundStyle(theme.colors.textSecondary)
+                    }
+                }
+
+                Button("退出登录", role: .destructive) {
+                    Task {
+                        await authStore.signOut()
+                    }
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("logoutButton")
+            } else {
+                Text("当前未登录")
+                    .font(theme.typography.caption)
+                    .foregroundStyle(theme.colors.textSecondary)
+            }
+        }
+        .padding(theme.spacing.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .appCardStyle(theme: theme, elevated: true)
     }
 
